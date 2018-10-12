@@ -40,7 +40,7 @@ __FBSDID("$FreeBSD$");
 
 #ifdef __LP64__
 struct utrace_rtld32 {
-	char sig[4];
+	char sig[RTLD_UTRACE_SIG_SZ];
 	int event;
 	uint32_t handle;
 	uint32_t mapbase;
@@ -166,17 +166,38 @@ print_utrace_malloc(FILE *fp, void *p)
 int
 sysdecode_utrace(FILE *fp, void *p, size_t len)
 {
-#ifdef __LP64__
-	struct utrace_rtld ur;
-	struct utrace_rtld32 *pr;
 	struct utrace_malloc um;
-	struct utrace_malloc32 *pm;
-#endif
 	static const char rtld_utrace_sig[RTLD_UTRACE_SIG_SZ] = RTLD_UTRACE_SIG;
 
-	if (len == sizeof(struct utrace_rtld) && bcmp(p, rtld_utrace_sig,
-	    sizeof(rtld_utrace_sig)) == 0)
-		return (print_utrace_rtld(fp, p));
+	if (bcmp(p, rtld_utrace_sig, sizeof(rtld_utrace_sig)) == 0) {
+		/*
+		 * This claims to be from RTLD.  Glance at the size and apply
+		 * some translations for printout, if we can.
+		 */
+		struct utrace_rtld ur;
+
+		switch(len) {
+		case sizeof(struct utrace_rtld):
+			return (print_utrace_rtld(fp, p));
+#ifdef __LP64__
+		case sizeof(struct utrace_rtld32): {
+			struct utrace_rtld32 *pr;
+			pr = p;
+			memset(&ur, 0, sizeof(ur));
+			memcpy(ur.sig, pr->sig, sizeof(ur.sig));
+			ur.event = pr->event;
+			ur.handle = (void *)(uintptr_t)pr->handle;
+			ur.mapbase = (void *)(uintptr_t)pr->mapbase;
+			ur.mapsize = pr->mapsize;
+			ur.refcnt = pr->refcnt;
+			memcpy(ur.name, pr->name, sizeof(ur.name));
+			return (print_utrace_rtld(fp, &ur));
+		}
+#endif
+		default:
+			return (0);
+		}
+	}
 
 	if (len == sizeof(struct utrace_malloc)) {
 		print_utrace_malloc(fp, p);
@@ -184,22 +205,8 @@ sysdecode_utrace(FILE *fp, void *p, size_t len)
 	}
 
 #ifdef __LP64__
-	if (len == sizeof(struct utrace_rtld32) && bcmp(p, rtld_utrace_sig,
-	    sizeof(rtld_utrace_sig)) == 0) {
-		pr = p;
-		memset(&ur, 0, sizeof(ur));
-		memcpy(ur.sig, pr->sig, sizeof(ur.sig));
-		ur.event = pr->event;
-		ur.handle = (void *)(uintptr_t)pr->handle;
-		ur.mapbase = (void *)(uintptr_t)pr->mapbase;
-		ur.mapsize = pr->mapsize;
-		ur.refcnt = pr->refcnt;
-		memcpy(ur.name, pr->name, sizeof(ur.name));
-		return (print_utrace_rtld(fp, &ur));
-	}
-
 	if (len == sizeof(struct utrace_malloc32)) {
-		pm = p;
+		struct utrace_malloc32 *pm = p;
 		memset(&um, 0, sizeof(um));
 		um.p = pm->p == (uint32_t)-1 ? (void *)(intptr_t)-1 :
 		    (void *)(uintptr_t)pm->p;
