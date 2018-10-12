@@ -36,6 +36,7 @@ __FBSDID("$FreeBSD$");
 #include <stdio.h>
 #include <string.h>
 #include <sysdecode.h>
+#include "malloc_utrace.h"
 #include "rtld_utrace.h"
 
 #ifdef __LP64__
@@ -134,7 +135,37 @@ print_utrace_rtld(FILE *fp, void *p)
 	return (1);
 }
 
+struct utrace_malloc_old {
+	void *p;
+	size_t s;
+	void *r;
+};
+
+#ifdef __LP64__
+struct utrace_malloc32_old {
+	uint32_t p;
+	uint32_t s;
+	uint32_t r;
+};
+#endif
+
+static void
+print_utrace_malloc_old(FILE *fp, void *p)
+{
+	struct utrace_malloc_old *ut = p;
+
+	if (ut->p == (void *)(intptr_t)(-1))
+		fprintf(fp, "malloc_init()");
+	else if (ut->s == 0)
+		fprintf(fp, "free(%p)", ut->p);
+	else if (ut->p == NULL)
+		fprintf(fp, "%p = malloc(%zu)", ut->r, ut->s);
+	else
+		fprintf(fp, "%p = realloc(%p, %zu)", ut->r, ut->p, ut->s);
+}
+
 struct utrace_malloc {
+	char sig[MALLOC_UTRACE_SIG_SZ];
 	void *p;
 	size_t s;
 	void *r;
@@ -142,6 +173,7 @@ struct utrace_malloc {
 
 #ifdef __LP64__
 struct utrace_malloc32 {
+	char sig[MALLOC_UTRACE_SIG_SZ];
 	uint32_t p;
 	uint32_t s;
 	uint32_t r;
@@ -166,8 +198,9 @@ print_utrace_malloc(FILE *fp, void *p)
 int
 sysdecode_utrace(FILE *fp, void *p, size_t len)
 {
-	struct utrace_malloc um;
 	static const char rtld_utrace_sig[RTLD_UTRACE_SIG_SZ] = RTLD_UTRACE_SIG;
+	static const char malloc_utrace_sig[MALLOC_UTRACE_SIG_SZ] = MALLOC_UTRACE_SIG;
+
 
 	if (bcmp(p, rtld_utrace_sig, sizeof(rtld_utrace_sig)) == 0) {
 		/*
@@ -199,14 +232,41 @@ sysdecode_utrace(FILE *fp, void *p, size_t len)
 		}
 	}
 
-	if (len == sizeof(struct utrace_malloc)) {
-		print_utrace_malloc(fp, p);
-		return (1);
+	if (bcmp(p, malloc_utrace_sig, sizeof(malloc_utrace_sig)) == 0) {
+		/* Ditto for malloc */
+		struct utrace_malloc um;
+
+		switch(len) {
+		case sizeof(struct utrace_malloc):
+			print_utrace_malloc(fp, p);
+			return (1);
+#ifdef __LP64__
+		case sizeof(struct utrace_malloc32): {
+			struct utrace_malloc32 *pm = p;
+			memset(&um, 0, sizeof(um));
+			memcpy(um.sig, pm->sig, sizeof(um.sig));
+			um.p = pm->p == (uint32_t)-1 ? (void *)(intptr_t)-1 :
+			    (void *)(uintptr_t)pm->p;
+			um.s = pm->s;
+			um.r = (void *)(uintptr_t)pm->r;
+			print_utrace_malloc(fp, &um);
+			return (1);
+		}
+#endif
+		default:
+			return (0);
+		}
 	}
 
+	/* Older malloc trace compatibility */
+	switch(len) {
+	case sizeof(struct utrace_malloc_old):
+		print_utrace_malloc_old(fp, p);
+		return 1;
 #ifdef __LP64__
-	if (len == sizeof(struct utrace_malloc32)) {
-		struct utrace_malloc32 *pm = p;
+	case sizeof(struct utrace_malloc32_old): {
+		struct utrace_malloc_old um;
+		struct utrace_malloc32_old *pm = p;
 		memset(&um, 0, sizeof(um));
 		um.p = pm->p == (uint32_t)-1 ? (void *)(intptr_t)-1 :
 		    (void *)(uintptr_t)pm->p;
@@ -216,6 +276,7 @@ sysdecode_utrace(FILE *fp, void *p, size_t len)
 		return (1);
 	}
 #endif
+	}
 
 	return (0);
 }

@@ -18,6 +18,8 @@
 #include "jemalloc/internal/ticker.h"
 #include "jemalloc/internal/util.h"
 
+#include "malloc_utrace.h"
+
 /******************************************************************************/
 /* Data. */
 
@@ -165,6 +167,7 @@ static malloc_mutex_t	init_lock = MALLOC_MUTEX_INITIALIZER;
 #endif
 
 typedef struct {
+	char	sig[MALLOC_UTRACE_SIG_SZ];
 	void	*p;	/* Input pointer (as in realloc(p, s)). */
 	size_t	s;	/* Request size. */
 	void	*r;	/* Result pointer. */
@@ -175,6 +178,7 @@ typedef struct {
 	if (unlikely(opt_utrace)) {					\
 		int utrace_serrno = errno;				\
 		malloc_utrace_t ut;					\
+		memmove(ut.sig, MALLOC_UTRACE_SIG, MALLOC_UTRACE_SIG_SZ); \
 		ut.p = (a);						\
 		ut.s = (b);						\
 		ut.r = (c);						\
